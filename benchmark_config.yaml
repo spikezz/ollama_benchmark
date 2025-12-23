@@ -10,3 +10,8 @@ num_batch:
   start: 32
   end: 2080
   step: 128
+
+# Test order:
+# - true: Row-first (fixed batch, iterate through all ctx values) - complete horizontal rows
+# - false: Column-first (fixed ctx, iterate through all batch values) - complete vertical columns
+test_row_first: false

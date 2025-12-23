@@ -187,6 +187,9 @@ def main():
     batch_end = config.get('num_batch', {}).get('end', DEFAULT_BATCH_END)
     batch_step = config.get('num_batch', {}).get('step', DEFAULT_BATCH_STEP)
 
+    # Get test order preference (default: column-first)
+    test_row_first = config.get('test_row_first', False)
+
     # Command line arguments override config file
     if args.ctx_start is not None:
         ctx_start = args.ctx_start
@@ -217,6 +220,10 @@ def main():
 
     print(f"Total tests: {total_tests}")
     print(f"num_predict: 2 (minimal generation to test prompt eval only)")
+    if test_row_first:
+        print(f"Test order: Row-first (complete horizontal rows - fixed batch, varying ctx)")
+    else:
+        print(f"Test order: Column-first (complete vertical columns - fixed ctx, varying batch)")
     print(f"Estimated time per test: ~2.1 minutes (model reload + inference)")
     print(f"Estimated total time: ~{total_tests * 2.1 / 60:.1f} hours (~{total_tests * 2.1 / 1440:.1f} days)")
     print("=" * 80)
@@ -243,8 +250,27 @@ def main():
     test_num = 0
     start_time = time.time()
 
-    for num_ctx in NUM_CTX_RANGE:
-        for num_batch in NUM_BATCH_RANGE:
+    # Choose loop order based on test_row_first flag
+    if test_row_first:
+        # Row-first: iterate batch (rows) in outer loop, ctx (columns) in inner loop
+        outer_range = NUM_BATCH_RANGE
+        inner_range = NUM_CTX_RANGE
+        outer_is_batch = True
+    else:
+        # Column-first: iterate ctx (columns) in outer loop, batch (rows) in inner loop
+        outer_range = NUM_CTX_RANGE
+        inner_range = NUM_BATCH_RANGE
+        outer_is_batch = False
+
+    for outer_val in outer_range:
+        for inner_val in inner_range:
+            # Assign to appropriate variables based on loop order
+            if outer_is_batch:
+                num_batch = outer_val
+                num_ctx = inner_val
+            else:
+                num_ctx = outer_val
+                num_batch = inner_val
             test_num += 1
 
             # Skip if already completed

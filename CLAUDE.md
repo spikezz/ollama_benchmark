@@ -8,6 +8,13 @@ This is an Ollama benchmark tool designed to find optimal `num_ctx` and `num_bat
 
 ## Key Commands
 
+### Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+Required packages: numpy (<2.0 recommended), matplotlib, seaborn, pandas, pyyaml
+
 ### Run Benchmark
 ```bash
 # Full benchmark (default config)
@@ -45,14 +52,23 @@ python3 generate_heatmap.py
 
 ### Core Test Loop Structure
 
-**CRITICAL**: The benchmark follows a column-first testing order (per user preference):
+**CONFIGURABLE**: The benchmark supports two testing orders via `test_row_first` flag in YAML config:
 
+**Column-first (test_row_first: false, default)**:
 ```python
 for num_ctx in NUM_CTX_RANGE:      # Outer loop: iterate through ctx values
     for num_batch in NUM_BATCH_RANGE:  # Inner loop: iterate through batch values
 ```
+Tests all `num_batch` values for each `num_ctx` value before moving to the next `num_ctx` (completes vertical columns in the heatmap).
 
-This tests all `num_batch` values for each `num_ctx` value before moving to the next `num_ctx` (testing left-to-right columns in the heatmap).
+**Row-first (test_row_first: true)**:
+```python
+for num_batch in NUM_BATCH_RANGE:   # Outer loop: iterate through batch values
+    for num_ctx in NUM_CTX_RANGE:   # Inner loop: iterate through ctx values
+```
+Tests all `num_ctx` values for each `num_batch` value before moving to the next `num_batch` (completes horizontal rows in the heatmap).
+
+The loop order is chosen at runtime based on the config flag.
 
 ### Test Execution Flow
 
@@ -89,7 +105,13 @@ num_batch:
   start: 128
   end: 2048
   step: 128
+
+# Test iteration order
+test_row_first: false  # false=column-first (default), true=row-first
 ```
+
+- `test_row_first: false` (default) - Column-first: completes all batch values for each ctx (vertical columns)
+- `test_row_first: true` - Row-first: completes all ctx values for each batch (horizontal rows)
 
 ### Checkpoint/Resume System
 
@@ -151,3 +173,34 @@ Tests use `num_predict=2` (minimal token generation) to isolate prompt processin
 ## Configuration vs Code Modification
 
 **Always prefer YAML config files over modifying source code** for test range changes. User explicitly requested this approach. Create new YAML configs for different test scenarios rather than editing `benchmark_ollama.py`.
+
+## Common Workflows
+
+### Retest Failed Configurations
+Remove failed entries from `benchmark_results.json` and rerun:
+```bash
+python3 << 'EOF'
+import json
+with open('benchmark_results.json', 'r') as f:
+    data = json.load(f)
+data['results'] = [r for r in data['results']
+                   if not (r['num_ctx'] == 92160 and r['num_batch'] == 128)]
+with open('benchmark_results.json', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+python3 benchmark_ollama.py --config config_quick_test.yaml
+```
+
+### Backup and Restore Results
+```bash
+# Backup before switching configs
+cp benchmark_results.json benchmark_results_backup_$(date +%Y%m%d_%H%M%S).json
+
+# Restore backup
+cp benchmark_results_backup_20251223_202917.json benchmark_results.json
+```
+
+### Switch Test Order
+Edit config file to change `test_row_first`:
+- `false` - Column-first (default): complete vertical columns
+- `true` - Row-first: complete horizontal rows

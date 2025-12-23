@@ -36,6 +36,8 @@ num_batch:
   start: 32
   end: 2080
   step: 128
+
+test_row_first: false  # Column-first (完成垂直列)
 ```
 - 总测试数: 47 × 17 = 799次
 - 预计时间: ~28小时
@@ -51,6 +53,8 @@ num_batch:
   start: 128
   end: 2048
   step: 128
+
+test_row_first: false  # Column-first (完成垂直列)
 ```
 - 总测试数: 39 × 16 = 624次
 - 预计时间: ~21.8小时
@@ -139,18 +143,37 @@ python3 generate_heatmap.py
 
 ### 测试顺序
 
-**按列测试**（从左到右）：
-- 先测试 `num_ctx=<start>` 的所有 `num_batch` 值
+可以通过配置文件中的 `test_row_first` 标志控制测试顺序：
+
+**列优先（test_row_first: false，默认）**：
+- 先测试 `num_ctx=<start>` 的所有 `num_batch` 值（完成一列）
 - 再测试 `num_ctx=<start+step>` 的所有 `num_batch` 值
 - 以此类推
 
-例如对于配置 `ctx: 32768-36864:2048, batch: 128-384:128`:
+例如对于配置 `ctx: 32768-36864:2048, batch: 128-384:128, test_row_first: false`:
 ```
 [1/9] ctx=32768, batch=128
 [2/9] ctx=32768, batch=256
-[3/9] ctx=32768, batch=384
+[3/9] ctx=32768, batch=384  ← 完成第一列（ctx=32768）
 [4/9] ctx=34816, batch=128
 [5/9] ctx=34816, batch=256
+[6/9] ctx=34816, batch=384  ← 完成第二列（ctx=34816）
+...
+```
+
+**行优先（test_row_first: true）**：
+- 先测试 `num_batch=<start>` 的所有 `num_ctx` 值（完成一行）
+- 再测试 `num_batch=<start+step>` 的所有 `num_ctx` 值
+- 以此类推
+
+例如对于配置 `ctx: 32768-36864:2048, batch: 128-384:128, test_row_first: true`:
+```
+[1/9] ctx=32768, batch=128
+[2/9] ctx=34816, batch=128
+[3/9] ctx=36864, batch=128  ← 完成第一行（batch=128）
+[4/9] ctx=32768, batch=256
+[5/9] ctx=34816, batch=256
+[6/9] ctx=36864, batch=256  ← 完成第二行（batch=256）
 ...
 ```
 
