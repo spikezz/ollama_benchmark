@@ -4,7 +4,7 @@
 
 num_ctx:
   start: 32768
-  end: 81920
+  end: 110592
   step: 2048
 
 num_batch:

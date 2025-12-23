@@ -306,11 +306,27 @@ def main():
                 })
             else:
                 print("  ERROR: Could not parse prompt eval rate")
+                if output:
+                    # Print last 500 chars of output to diagnose the issue
+                    print(f"  Output (last 500 chars): {output[-500:]}")
+                    # Check for common error patterns
+                    if "out of memory" in output.lower() or "oom" in output.lower():
+                        error_type = "CUDA OOM"
+                    elif "cuda error" in output.lower() or "resource allocation failed" in output.lower():
+                        error_type = "CUDA resource allocation error"
+                    elif "error" in output.lower():
+                        error_type = "Ollama error"
+                    else:
+                        error_type = "Parse error"
+                else:
+                    error_type = "Timeout or no output"
+                    print(f"  No output received (likely timeout)")
+
                 results_data["results"].append({
                     "num_ctx": num_ctx,
                     "num_batch": num_batch,
                     "prompt_eval_rate": None,
-                    "error": "Parse error"
+                    "error": error_type
                 })
 
             # Save results after each test

@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Configuration
 RESULTS_FILE = "/home/spikezz/Project/ollama_benchmark/benchmark_results.json"
-OUTPUT_FILE = "/home/spikezz/Project/ollama_benchmark/heatmap.png"
+OUTPUT_FILE = "/home/spikezz/Project/ollama_benchmark/heatmap_highlighted.png"
 OUTPUT_CSV = "/home/spikezz/Project/ollama_benchmark/results_table.csv"
 
 def load_results():
@@ -25,8 +25,9 @@ def create_heatmap_data(results):
     num_ctx_values = sorted(set(r["num_ctx"] for r in results))
     num_batch_values = sorted(set(r["num_batch"] for r in results))
 
-    # Create matrix
+    # Create matrix for data and errors
     data = np.full((len(num_batch_values), len(num_ctx_values)), np.nan)
+    errors = {}  # Store error information: (batch_idx, ctx_idx) -> error_type
 
     # Map indices
     ctx_to_idx = {v: i for i, v in enumerate(num_ctx_values)}
@@ -34,12 +35,17 @@ def create_heatmap_data(results):
 
     # Fill matrix
     for r in results:
-        if r.get("prompt_eval_rate") is not None:
-            ctx_idx = ctx_to_idx[r["num_ctx"]]
-            batch_idx = batch_to_idx[r["num_batch"]]
-            data[batch_idx, ctx_idx] = r["prompt_eval_rate"]
+        ctx_idx = ctx_to_idx[r["num_ctx"]]
+        batch_idx = batch_to_idx[r["num_batch"]]
 
-    return data, num_ctx_values, num_batch_values
+        if r.get("prompt_eval_rate") is not None:
+            data[batch_idx, ctx_idx] = r["prompt_eval_rate"]
+        elif r.get("error"):
+            # Mark as special value for failed tests (use -1 as marker)
+            data[batch_idx, ctx_idx] = -1
+            errors[(batch_idx, ctx_idx)] = r["error"]
+
+    return data, num_ctx_values, num_batch_values, errors
 
 def save_csv(data, num_ctx_values, num_batch_values):
     """Save results as CSV table"""
@@ -54,61 +60,51 @@ def save_csv(data, num_ctx_values, num_batch_values):
     df.to_csv(OUTPUT_CSV)
     print(f"CSV table saved to: {OUTPUT_CSV}")
 
-def plot_heatmap(data, num_ctx_values, num_batch_values, metadata):
-    """Plot and save heatmap"""
-    # Create figure
-    plt.figure(figsize=(20, 12))
+def plot_heatmap(data, num_ctx_values, num_batch_values, metadata, errors):
+    """Plot and save heatmap with best value highlighted"""
+    # Create figure with dynamic size based on number of values
+    # Increase width to avoid overlapping annotations
+    fig_width = max(20, len(num_ctx_values) * 0.8)
+    fig_height = max(6, len(num_batch_values) * 0.4)
 
-    # Create heatmap
+    # Mask for failed tests
+    failed_mask = (data == -1)
+
+    # Replace -1 with nan for display purposes (will show as gray)
+    display_data = data.copy()
+    display_data[failed_mask] = np.nan
+
+    plt.figure(figsize=(fig_width, fig_height))
+
+    # Find best value (excluding failed tests)
+    max_rate = np.nanmax(display_data)
+    max_pos = np.where(display_data == max_rate)
+
     ax = sns.heatmap(
-        data,
+        display_data,
         xticklabels=num_ctx_values,
         yticklabels=num_batch_values,
         cmap="YlOrRd",
         annot=True,
         fmt=".1f",
+        annot_kws={"size": 9},  # Reduce annotation font size
         cbar_kws={'label': 'Prompt Eval Rate (tokens/s)'},
         linewidths=0.5,
         linecolor='gray'
     )
 
-    # Set labels
-    plt.xlabel('num_ctx', fontsize=14, fontweight='bold')
-    plt.ylabel('num_batch', fontsize=14, fontweight='bold')
-    plt.title('Ollama nemotron_f Model - Prompt Eval Rate Heatmap\n' +
-              f'num_ctx range: {num_ctx_values[0]} to {num_ctx_values[-1]}, ' +
-              f'num_batch range: {num_batch_values[0]} to {num_batch_values[-1]}',
-              fontsize=16, fontweight='bold', pad=20)
+    # Add error annotations on failed cells (for highlighted version too)
+    for (batch_idx, ctx_idx), error_type in errors.items():
+        error_short = error_type.replace("CUDA resource allocation error", "CUDA alloc\nerror")
+        error_short = error_short.replace("Parse error", "Parse\nerror")
+        error_short = error_short.replace("Timeout or no output", "Timeout")
 
-    # Rotate x labels for better readability
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
+        ax.text(ctx_idx + 0.5, batch_idx + 0.5, f'✗\n{error_short}',
+                ha='center', va='center', color='red', fontsize=8, fontweight='bold')
 
-    # Adjust layout
-    plt.tight_layout()
-
-    # Save
-    plt.savefig(OUTPUT_FILE, dpi=300, bbox_inches='tight')
-    print(f"Heatmap saved to: {OUTPUT_FILE}")
-
-    # Also save a version with best value highlighted
-    plt.figure(figsize=(20, 12))
-
-    # Find best value
-    max_rate = np.nanmax(data)
-    max_pos = np.where(data == max_rate)
-
-    ax = sns.heatmap(
-        data,
-        xticklabels=num_ctx_values,
-        yticklabels=num_batch_values,
-        cmap="YlOrRd",
-        annot=True,
-        fmt=".1f",
-        cbar_kws={'label': 'Prompt Eval Rate (tokens/s)'},
-        linewidths=0.5,
-        linecolor='gray'
-    )
+        from matplotlib.patches import Rectangle
+        ax.add_patch(Rectangle((ctx_idx, batch_idx), 1, 1,
+                               fill=False, edgecolor='red', lw=2, linestyle='--'))
 
     # Highlight best value
     if len(max_pos[0]) > 0:
@@ -139,30 +135,40 @@ def plot_heatmap(data, num_ctx_values, num_batch_values, metadata):
     plt.yticks(rotation=0)
     plt.tight_layout()
 
-    highlighted_output = OUTPUT_FILE.replace('.png', '_highlighted.png')
-    plt.savefig(highlighted_output, dpi=300, bbox_inches='tight')
-    print(f"Highlighted heatmap saved to: {highlighted_output}")
+    plt.savefig(OUTPUT_FILE, dpi=300, bbox_inches='tight')
+    print(f"Heatmap saved to: {OUTPUT_FILE}")
 
     return max_rate, best_ctx if len(max_pos[0]) > 0 else None, best_batch if len(max_pos[0]) > 0 else None
 
 def print_statistics(data, num_ctx_values, num_batch_values):
     """Print summary statistics"""
-    valid_data = data[~np.isnan(data)]
+    # Count successful tests (not NaN and not -1)
+    successful_data = data[(~np.isnan(data)) & (data != -1)]
+    # Count failed tests (marked as -1)
+    failed_count = np.sum(data == -1)
+    # Count untested
     total_possible = len(num_ctx_values) * len(num_batch_values)
+    tested_count = np.sum(~np.isnan(data))
+    untested_count = total_possible - tested_count
 
     print("\n" + "=" * 80)
     print("BENCHMARK STATISTICS")
     print("=" * 80)
-    print(f"Completed tests: {len(valid_data)}")
+    print(f"Total possible combinations: {total_possible}")
+    print(f"Successful tests: {len(successful_data)}")
+    print(f"Failed tests: {failed_count}")
+    print(f"Not yet tested: {untested_count}")
     print(f"Coverage: {len(num_ctx_values)} num_ctx values × {len(num_batch_values)} num_batch values")
-    print(f"Possible combinations in current coverage: {total_possible}")
-    print(f"Not yet tested (in coverage area): {total_possible - len(valid_data)}")
     print()
-    print(f"Max prompt eval rate: {np.nanmax(data):.2f} tokens/s")
-    print(f"Min prompt eval rate: {np.nanmin(data):.2f} tokens/s")
-    print(f"Mean prompt eval rate: {np.nanmean(data):.2f} tokens/s")
-    print(f"Median prompt eval rate: {np.nanmedian(data):.2f} tokens/s")
-    print(f"Std deviation: {np.nanstd(data):.2f} tokens/s")
+
+    if len(successful_data) > 0:
+        print(f"Max prompt eval rate: {np.max(successful_data):.2f} tokens/s")
+        print(f"Min prompt eval rate: {np.min(successful_data):.2f} tokens/s")
+        print(f"Mean prompt eval rate: {np.mean(successful_data):.2f} tokens/s")
+        print(f"Median prompt eval rate: {np.median(successful_data):.2f} tokens/s")
+    else:
+        print("No successful tests to compute statistics")
+
     print("=" * 80)
 
 def main():
@@ -186,7 +192,7 @@ def main():
 
     # Create heatmap data
     print("Processing data...")
-    data, num_ctx_values, num_batch_values = create_heatmap_data(results)
+    data, num_ctx_values, num_batch_values, errors = create_heatmap_data(results)
 
     # Save CSV
     print("Saving CSV table...")
@@ -195,7 +201,7 @@ def main():
 
     # Plot heatmap
     print("Generating heatmap...")
-    max_rate, best_ctx, best_batch = plot_heatmap(data, num_ctx_values, num_batch_values, results_data.get("metadata", {}))
+    max_rate, best_ctx, best_batch = plot_heatmap(data, num_ctx_values, num_batch_values, results_data.get("metadata", {}), errors)
 
     # Print statistics
     print_statistics(data, num_ctx_values, num_batch_values)

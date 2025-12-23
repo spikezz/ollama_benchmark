@@ -1,31 +1,12 @@
 # Ollama nemotron_f Benchmark
 
-自动化测试脚本，用于找到ollama nemotron_f模型的最优num_ctx和num_batch组合。
+自动化测试脚本，用于找到Ollama nemotron_f模型的最优num_ctx和num_batch组合。
 
-## 测试参数
+## 项目概述
 
-- **num_ctx**: 8192 到 102400，步长 2048（共47个值）
-- **num_batch**: 32 到 2080，步长 128（共17个值）
-- **num_predict**: 2（最小生成量，只测试prompt eval速度）
-- **总测试次数**: 799次（47 × 17）
-- **预计时间**: 约28小时（1.2天）- 每次测试约2.1分钟（实测数据）
+通过系统化测试不同的 `num_ctx` 和 `num_batch` 参数组合，测量 **prompt eval rate (tokens/s)**，找到最快的配置。支持长时间测试的断点续传和实时进度监控。
 
-## 目标
-
-测试不同参数组合下的 **prompt eval rate (tokens/s)**，找到最快的配置。
-
-## 文件说明
-
-- `calculate_params.py` - 计算测试参数和预计时间
-- `benchmark_ollama.py` - 主测试脚本
-- `generate_heatmap.py` - 生成热力图和统计数据
-- `requirements.txt` - Python依赖包
-- `benchmark_results.json` - 测试结果（运行后生成）
-- `heatmap.png` - 热力图（运行后生成）
-- `heatmap_highlighted.png` - 突出显示最优值的热力图（运行后生成）
-- `results_table.csv` - 结果表格（运行后生成）
-
-## 使用方法
+## 快速开始
 
 ### 1. 安装依赖
 
@@ -33,23 +14,68 @@
 pip install -r requirements.txt
 ```
 
-### 2. 查看测试参数
+需要的包：
+- numpy (建议 <2.0，避免与matplotlib兼容性问题)
+- matplotlib
+- seaborn
+- pandas
+- pyyaml
 
-```bash
-python3 calculate_params.py
+### 2. 配置测试范围
+
+编辑YAML配置文件来设置测试参数：
+
+**默认配置** (`benchmark_config.yaml`):
+```yaml
+num_ctx:
+  start: 8192
+  end: 102400
+  step: 2048
+
+num_batch:
+  start: 32
+  end: 2080
+  step: 128
 ```
+- 总测试数: 47 × 17 = 799次
+- 预计时间: ~28小时
+
+**快速测试** (`config_quick_test.yaml`):
+```yaml
+num_ctx:
+  start: 32768
+  end: 110592
+  step: 2048
+
+num_batch:
+  start: 128
+  end: 2048
+  step: 128
+```
+- 总测试数: 39 × 16 = 624次
+- 预计时间: ~21.8小时
+
+或创建自己的配置文件用于不同测试场景。
 
 ### 3. 运行基准测试
 
 ```bash
+# 使用默认配置
 python3 benchmark_ollama.py
+
+# 使用指定配置
+python3 benchmark_ollama.py --config config_quick_test.yaml
+
+# 后台运行（推荐用于长时间测试）
+python3 -u benchmark_ollama.py --config config_quick_test.yaml 2>&1 &
 ```
 
-测试过程中：
-- 每次测试会自动创建新的modelfile
-- 使用 `/home/spikezz/Project/new_repo/p` 文件作为提示词
-- 结果会实时保存到 `benchmark_results.json`
-- 如果中断，重新运行会跳过已完成的测试
+**命令行参数覆盖**:
+```bash
+python3 benchmark_ollama.py --config myconfig.yaml \
+    --ctx-start 32768 --ctx-end 81920 --ctx-step 2048 \
+    --batch-start 128 --batch-end 2048 --batch-step 128
+```
 
 ### 4. 生成热力图
 
@@ -58,76 +84,146 @@ python3 generate_heatmap.py
 ```
 
 这将生成：
-- `heatmap.png` - 完整热力图
 - `heatmap_highlighted.png` - 突出显示最优值的热力图
 - `results_table.csv` - CSV格式的结果表格
 - 控制台输出统计信息和最优配置
 
+## 文件说明
+
+### 核心脚本
+- `benchmark_ollama.py` - 主测试脚本，支持YAML配置和断点续传
+- `generate_heatmap.py` - 生成热力图可视化，显示失败测试并标注错误原因
+- `calculate_params.py` - 计算测试参数和预计时间
+
+### 配置文件
+- `benchmark_config.yaml` - 默认全范围配置
+- `config_quick_test.yaml` - 快速测试配置
+
+### 生成文件
+- `benchmark_results.json` - 测试结果（自动保存，用于断点续传）
+- `benchmark_results_backup_*.json` - 结果备份（手动创建）
+- `heatmap_highlighted.png` - 热力图可视化（带最优值标注）
+- `results_table.csv` - 结果表格
+- `modelfile_temp` - 临时modelfile（测试期间生成）
+
+### 其他
+- `requirements.txt` - Python依赖包
+- `README.md` - 本文件
+- `CLAUDE.md` - 代码库架构说明（供Claude Code使用）
+
 ## 测试工作原理
 
-1. 脚本读取modelfile模板 (`/home/spikezz/Project/modelfile_nemotron_fast`)
-2. 对于每个num_ctx和num_batch组合（47×17=799次）：
-   - 修改modelfile中的参数（num_ctx, num_batch, num_predict=2）
-   - 运行 `ollama create nemotron_f -f modelfile_temp` 创建新模型
-   - 模型重新加载到5张GPU，分配KV cache和context（约1.5-2分钟）
-   - 用verbose模式运行模型: `cat p | ollama run nemotron_f --verbose`（约30-40秒）
-   - 解析输出中的 "prompt eval rate" 值
-   - 立即保存结果到 `benchmark_results.json`
-3. 完成后运行 `python3 generate_heatmap.py` 生成热力图可视化
+### 执行流程
 
-**实际测试时间分析（基于实测数据）：**
-- 每次测试平均耗时：**128秒（2.1分钟）**
-- 模型加载 + KV cache分配：约90秒
-- 推理执行（num_predict=2）：约38秒
-- 总计799次测试：约28小时（1.2天）
+每个测试组合都会：
 
-**为什么每次测试需要2分钟？**
-- 改变num_ctx和num_batch需要重新配置模型的内存分配
-- 必须重新加载模型权重到5张GPU
-- 重新分配KV cache和context缓冲区
-- 这个过程无法通过命令行参数避免，是硬件限制
+1. **创建modelfile** - 从模板 `/home/spikezz/Project/modelfile_nemotron_fast` 读取，修改以下参数：
+   - `PARAMETER num_ctx <value>`
+   - `PARAMETER num_batch <value>`
+   - `PARAMETER num_predict 2` (最小生成量)
 
-## 结果输出
+2. **重新创建模型** - `ollama create nemotron_f -f modelfile_temp`
+   - 触发模型重新加载到5张GPU
+   - 重新分配KV cache和context缓冲区
+   - 耗时约90秒
 
-测试完成后，你将获得：
+3. **运行推理** - `cat /home/spikezz/Project/new_repo/p | ollama run nemotron_f --verbose`
+   - 使用verbose模式捕获性能指标
+   - 耗时约30-40秒
 
-1. **最优配置** - num_ctx和num_batch的最佳组合及其prompt eval rate
-2. **热力图** - 可视化所有47×17（799个）组合的性能
-   - `heatmap.png` - 完整热力图
-   - `heatmap_highlighted.png` - 标注最优值的热力图
-3. **统计数据** - 最大值、最小值、平均值、中位数、标准差等
-4. **CSV表格** - 可用于Excel或进一步分析（`results_table.csv`）
-5. **JSON数据** - 完整的测试数据（`benchmark_results.json`）
+4. **解析结果** - 从输出中提取 "prompt eval rate: X tokens/s"
 
-**测试范围：**
-- num_ctx: 8192, 10240, 12288, ..., 100352, 102400
-- num_batch: 32, 160, 288, 416, 544, 672, 800, 928, 1056, 1184, 1312, 1440, 1568, 1696, 1824, 1952, 2080
+5. **保存结果** - 立即追加到 `benchmark_results.json`
 
-## 查看中间结果
+6. **断点续传** - 重启时自动跳过已完成的测试
 
-测试进行中也可以随时查看当前结果：
+### 测试顺序
+
+**按列测试**（从左到右）：
+- 先测试 `num_ctx=<start>` 的所有 `num_batch` 值
+- 再测试 `num_ctx=<start+step>` 的所有 `num_batch` 值
+- 以此类推
+
+例如对于配置 `ctx: 32768-36864:2048, batch: 128-384:128`:
+```
+[1/9] ctx=32768, batch=128
+[2/9] ctx=32768, batch=256
+[3/9] ctx=32768, batch=384
+[4/9] ctx=34816, batch=128
+[5/9] ctx=34816, batch=256
+...
+```
+
+### 时间估算
+
+**每次测试约2.1分钟** (实测数据):
+- 模型加载 + KV cache分配: ~90秒
+- 推理执行 (num_predict=2): ~30秒
+
+**为什么这么慢？**
+改变 `num_ctx` 或 `num_batch` 需要重新配置模型的内存分配，必须：
+- 重新加载模型权重到5张GPU
+- 重新分配KV cache
+- 重新分配context缓冲区
+
+这是硬件限制，无法通过命令行参数或其他方式优化。
+
+### 错误处理
+
+测试可能因以下原因失败：
+- **CUDA OOM** - 显存不足
+- **CUDA resource allocation error** - GPU资源分配失败（通常是临时性问题）
+- **Timeout** - 测试超时（>6分钟）
+- **Parse error** - 无法解析输出
+
+失败的测试会：
+- 保存为 `"prompt_eval_rate": null, "error": "错误类型"`
+- 在热力图中用红色✗标记并显示错误原因
+- 可以通过删除JSON中的条目重新测试
+
+## 监控进度
+
+### 查看完成情况
 
 ```bash
-# 查看已完成的测试数量和进度
-python3 -c "import json; data=json.load(open('benchmark_results.json')); print(f'已完成: {len(data[\"results\"])}/799 ({len(data[\"results\"])/799*100:.1f}%)')"
+# 查看已完成的测试数量
+python3 -c "import json; data=json.load(open('benchmark_results.json')); print(f'已完成: {len(data[\"results\"])}')"
 
-# 查看最新几个测试结果
+# 查看成功/失败统计
+python3 << 'EOF'
+import json
+data = json.load(open('benchmark_results.json'))
+success = sum(1 for r in data['results'] if r.get('prompt_eval_rate') is not None)
+failed = sum(1 for r in data['results'] if r.get('error'))
+print(f"成功: {success}, 失败: {failed}, 总计: {len(data['results'])}")
+EOF
+```
+
+### 查看最新结果
+
+```bash
 python3 << 'EOF'
 import json
 data = json.load(open('benchmark_results.json'))
 print("最新5个测试:")
 for r in data['results'][-5:]:
-    rate = r.get('prompt_eval_rate', 'N/A')
-    print(f"  ctx={r['num_ctx']}, batch={r['num_batch']}, rate={rate}")
+    rate = r.get('prompt_eval_rate', 'FAILED')
+    error = r.get('error', '')
+    print(f"  ctx={r['num_ctx']}, batch={r['num_batch']}, rate={rate} {error}")
 EOF
+```
 
-# 生成当前的热力图（基于已完成的测试）
+### 生成中间热力图
+
+测试期间可以随时生成热力图查看当前结果：
+
+```bash
 python3 generate_heatmap.py
+```
 
-# 查看实时测试输出
-tail -f /tmp/claude/-home-spikezz/tasks/[task_id].output
+### 分析测试速度
 
-# 分析测试速度
+```bash
 python3 << 'EOF'
 import json
 from datetime import datetime
@@ -137,58 +233,287 @@ if len(results) >= 2:
     times = [datetime.fromisoformat(r['timestamp']) for r in results]
     avg = sum((times[i]-times[i-1]).total_seconds() for i in range(1,len(times)))/(len(times)-1)
     print(f"平均测试时间: {avg:.0f}秒 ({avg/60:.1f}分钟)")
-    remaining = 799 - len(data['results'])
-    eta_hours = remaining * avg / 3600
-    print(f"剩余{remaining}个测试，预计还需: {eta_hours:.1f}小时")
+
+    total_tests = data['metadata'].get('total_tests', 0)
+    remaining = total_tests - len(data['results'])
+    if remaining > 0:
+        eta_hours = remaining * avg / 3600
+        print(f"剩余{remaining}个测试，预计还需: {eta_hours:.1f}小时")
 EOF
 ```
 
+## 断点续传和备份
+
+### 暂停和恢复
+
+测试可以随时中断（Ctrl+C 或关机）：
+
+```bash
+# 停止测试
+pkill -f "benchmark_ollama.py"
+
+# 重新启动（会自动跳过已完成的测试）
+python3 benchmark_ollama.py --config config_quick_test.yaml
+```
+
+### 备份结果
+
+在切换测试配置前备份当前结果：
+
+```bash
+cp benchmark_results.json benchmark_results_backup_$(date +%Y%m%d_%H%M%S).json
+```
+
+### 恢复备份
+
+```bash
+cp benchmark_results_backup_20251223_202917.json benchmark_results.json
+```
+
+### 清空结果重新开始
+
+```bash
+# 备份旧结果
+mv benchmark_results.json benchmark_results_old.json
+
+# 或直接删除
+rm benchmark_results.json
+```
+
+## 结果解读
+
+### 热力图说明
+
+生成的热力图显示：
+- **X轴**: num_ctx 值
+- **Y轴**: num_batch 值
+- **颜色**: prompt eval rate (tokens/s)，越红越快
+- **蓝色边框**: 最优配置
+- **红色✗**: 失败的测试，标注错误类型
+
+### 统计信息
+
+```
+================================================================================
+BENCHMARK STATISTICS
+================================================================================
+Total possible combinations: 624
+Successful tests: 56
+Failed tests: 1
+Not yet tested: 567
+Coverage: 39 num_ctx values × 16 num_batch values
+
+Max prompt eval rate: 121.33 tokens/s
+Min prompt eval rate: 79.65 tokens/s
+Mean prompt eval rate: 99.40 tokens/s
+Median prompt eval rate: 84.63 tokens/s
+================================================================================
+
+================================================================================
+OPTIMAL CONFIGURATION
+================================================================================
+num_ctx: 59392
+num_batch: 128
+Prompt eval rate: 121.33 tokens/s
+================================================================================
+```
+
+### CSV导出
+
+`results_table.csv` 包含完整的数据矩阵，可以：
+- 在Excel中打开分析
+- 导入其他可视化工具
+- 进行自定义数据分析
+
 ## 注意事项
 
-- 测试需要约28小时完成（每次测试约2.1分钟，实测数据）
-- 每次测试包含：模型重载到GPU、KV cache分配、推理等过程
-- 确保ollama服务正在运行
-- 测试期间请勿手动操作ollama
-- 结果会自动保存到 `benchmark_results.json`，可以随时中断和恢复
-- 每次测试超时设置为360秒（6分钟）
-- num_predict设置为2，模型几乎不生成内容，只测试提示词处理速度
-- 建议在空闲时段运行（如夜间），脚本支持断点续传
-- 每次改变num_ctx/num_batch都需要重新加载模型，这是耗时的主要原因
-- 实际测试显示每次约128秒（2.1分钟），比初始估计的5分钟快得多
+1. **确保Ollama服务运行** - 测试依赖Ollama服务
+2. **不要手动操作Ollama** - 测试期间避免使用 `ollama run` 等命令
+3. **测试时间很长** - 完整测试需要20-30小时，建议夜间运行
+4. **自动保存** - 每次测试后立即保存结果，可以安全中断
+5. **配置冲突** - 切换不同范围的配置前先备份 `benchmark_results.json`
+6. **依赖文件** - 确保以下文件存在：
+   - `/home/spikezz/Project/modelfile_nemotron_fast` (modelfile模板)
+   - `/home/spikezz/Project/new_repo/p` (提示词文件)
+
+## 高级用法
+
+### 创建自定义配置
+
+创建新的YAML配置文件测试特定范围：
+
+```yaml
+# config_high_ctx.yaml - 测试高ctx值
+num_ctx:
+  start: 65536
+  end: 110592
+  step: 4096
+
+num_batch:
+  start: 128
+  end: 1024
+  step: 128
+```
+
+```bash
+python3 benchmark_ollama.py --config config_high_ctx.yaml
+```
+
+### 重测失败的配置
+
+从 `benchmark_results.json` 中删除失败的条目，重新运行测试即可：
+
+```bash
+python3 << 'EOF'
+import json
+
+with open('benchmark_results.json', 'r') as f:
+    data = json.load(f)
+
+# 删除 ctx=92160, batch=128 的失败记录
+data['results'] = [r for r in data['results']
+                   if not (r['num_ctx'] == 92160 and r['num_batch'] == 128)]
+
+with open('benchmark_results.json', 'w') as f:
+    json.dump(data, f, indent=2)
+
+print(f"Remaining tests: {len(data['results'])}")
+EOF
+
+# 重新运行测试
+python3 benchmark_ollama.py --config config_quick_test.yaml
+```
+
+### 合并多个测试结果
+
+如果分别运行了不同范围的测试，可以合并结果：
+
+```bash
+python3 << 'EOF'
+import json
+
+# 加载多个结果文件
+with open('benchmark_results_1.json', 'r') as f:
+    data1 = json.load(f)
+with open('benchmark_results_2.json', 'r') as f:
+    data2 = json.load(f)
+
+# 合并去重
+combined = data1['results'] + data2['results']
+unique = {(r['num_ctx'], r['num_batch']): r for r in combined}
+
+# 保存合并结果
+merged = {
+    'metadata': data1['metadata'],
+    'results': list(unique.values())
+}
+
+with open('benchmark_results_merged.json', 'w') as f:
+    json.dump(merged, f, indent=2)
+
+print(f"Merged {len(unique)} unique tests")
+EOF
+```
+
+## 常见问题
+
+**Q: 为什么每次测试需要2分钟？**
+
+A: 改变 `num_ctx` 或 `num_batch` 需要完全重新加载模型到GPU并重新分配内存。这是硬件限制，无法优化。
+
+**Q: 可以同时运行多个测试吗？**
+
+A: 不建议。每次测试都会重新创建 `nemotron_f` 模型，并发运行会互相干扰。
+
+**Q: 测试失败了怎么办？**
+
+A: 大部分失败是临时性的（如GPU资源分配失败）。从JSON中删除失败记录，重新运行即可重测。
+
+**Q: 如何只测试部分范围？**
+
+A: 创建自定义YAML配置文件，或使用命令行参数覆盖范围。
+
+**Q: 热力图数字重叠怎么办？**
+
+A: `generate_heatmap.py` 会根据数据量自动调整图像大小。如需手动调整，修改 `fig_width` 和 `fig_height` 计算公式。
+
+**Q: 如何找到特定ctx或batch的最优值？**
+
+A: 查看 `results_table.csv`，在Excel中筛选特定行或列，找到该行/列的最大值。
 
 ## 示例输出
 
+### 测试运行时
+
 ```
-[1/799] Testing num_ctx=8192, num_batch=32
-  ETA: 28.0 hours
+================================================================================
+Ollama Benchmark - nemotron_f Model
+================================================================================
+num_ctx range: 32768 to 110592 (step 2048)
+num_batch range: 128 to 2048 (step 128)
+Total tests: 624
+num_predict: 2 (minimal generation to test prompt eval only)
+Estimated time per test: ~2.1 minutes (model reload + inference)
+Estimated total time: ~21.8 hours (~0.9 days)
+================================================================================
+
+[1/624] Skipping num_ctx=32768, num_batch=128 (already completed)
+[2/624] Skipping num_ctx=32768, num_batch=256 (already completed)
+
+[3/624] Testing num_ctx=32768, num_batch=384
+  ETA: 21.7 hours (1304.1 minutes)
   Creating modelfile...
   Creating ollama model...
   Running benchmark...
-  ✓ prompt eval rate: 78.45 tokens/s
+  ✓ prompt eval rate: 83.34 tokens/s
 
-[2/799] Testing num_ctx=8192, num_batch=160
-  ETA: 27.9 hours
+[4/624] Testing num_ctx=32768, num_batch=512
+  ETA: 21.6 hours (1297.2 minutes)
   Creating modelfile...
   Creating ollama model...
   Running benchmark...
-  ✓ prompt eval rate: 82.31 tokens/s
+  ✓ prompt eval rate: 82.60 tokens/s
+```
 
-...
+### 错误示例
 
-[13/799] Testing num_ctx=20480, num_batch=1088
-  ETA: 27.5 hours
+```
+[30/624] Testing num_ctx=92160, num_batch=128
+  ETA: 20.8 hours (1249.5 minutes)
   Creating modelfile...
   Creating ollama model...
   Running benchmark...
-  ✓ prompt eval rate: 85.47 tokens/s
+  ERROR: Could not parse prompt eval rate
+  Output (last 500 chars): Error: 500 Internal Server Error: llama runner process has terminated: CUDA error: the resource allocation failed
+  current device: 4, in function cublas_handle at //ml/backend/ggml/ggml/src/ggml-cuda/common.cuh:1260
 ```
 
-测试完成后生成热力图：
+### 最终结果
+
 ```
+================================================================================
 OPTIMAL CONFIGURATION
-num_ctx: 16384
-num_batch: 832
-Prompt eval rate: 85.73 tokens/s
+================================================================================
+num_ctx: 59392
+num_batch: 128
+Prompt eval rate: 121.33 tokens/s
+================================================================================
+```
 
-(最终结果会基于全部799个测试确定)
+## 项目结构
+
+```
+ollama_benchmark/
+├── benchmark_ollama.py          # 主测试脚本
+├── generate_heatmap.py          # 可视化生成器
+├── calculate_params.py          # 参数计算工具
+├── benchmark_config.yaml        # 默认配置
+├── config_quick_test.yaml       # 快速测试配置
+├── requirements.txt             # Python依赖
+├── README.md                    # 本文件
+├── CLAUDE.md                    # 代码库架构文档
+├── .gitignore                   # Git忽略规则
+├── benchmark_results.json       # 测试结果（生成）
+├── heatmap_highlighted.png      # 热力图（生成）
+└── results_table.csv            # 结果表格（生成）
 ```

@@ -5,9 +5,7 @@ benchmark_results_backup_*.json
 *.output
 
 # Generated files
-heatmap.png
 heatmap_highlighted.png
-heatmap_highlighted_old.png
 results_table.csv
 modelfile_temp
 
