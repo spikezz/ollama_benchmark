@@ -1,0 +1,13 @@
+# Quick test configuration
+# Small subset for testing/validation
+# Estimated: 3 ctx × 4 batch = 12 tests (~25 minutes)
+
+num_ctx:
+  start: 32768
+  end: 81920
+  step: 2048
+
+num_batch:
+  start: 128
+  end: 2048
+  step: 128

@@ -1,0 +1,12 @@
+# Default benchmark configuration
+# Full range test (799 tests, ~28 hours)
+
+num_ctx:
+  start: 8192
+  end: 102400
+  step: 2048
+
+num_batch:
+  start: 32
+  end: 2080
+  step: 128
